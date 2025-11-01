@@ -1,148 +1,143 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import { SepoliaConfig } from "@fhevm/solidity/config/ZamaConfig.sol";
-import { FHE, euint32, externalEuint32, euint256, euint64 } from "@fhevm/solidity/lib/FHE.sol";
+import { FHE, euint8, euint32, eaddress, externalEuint8, ebool, euint128, euint64 } from "@fhevm/solidity/lib/FHE.sol";
 
 contract PointsGame is SepoliaConfig {
-    struct RoomInfo {
-        string player1;
-        euint32 player1Number;
-        string player2;
-        euint32 player2Number;
-    }
+    // struct RoomInfo {
+    //     string player1;
+    //     euint8 player1Number;
+    //     string player2;
+    //     euint8 player2Number;
+    // }
 
     struct TopWinner {
         string name;
         address user;
-        euint256 points;
+        euint128 points;
     }
 
     // mapping (address => euint256) private leaderboard;
     // mapping (euint256 => generatedNumbers) private answers;
-    mapping (string => RoomInfo) private roomDetails;
+    // mapping (string => RoomInfo) private roomDetails;
 
     TopWinner public _topWinner;
-    mapping (address => euint256) private gamesPlayed;
-    mapping (address => euint256) private totalPointsGottenFromGames;
-    mapping (address => euint32[]) private userNumbers;
-    mapping (address => euint256) private userPoints;
-    mapping (address => euint32[]) private userResults;
+    mapping (address => euint64) private gamesPlayed;
+    mapping (address => euint128) private totalPointsGottenFromGames;
+    mapping (address => euint8[]) private userNumbers;
+    mapping (address => euint128) private userPoints;
+    mapping (address => euint8[]) private userResults;
 
     event NumberSaved(string msg);
-    error OnlyFiveQuestionsCanBeAnswered;
+    event GottenPlayersNumbers(string msg);
+    error OnlyFiveQuestionsCanBeAnswered();
+    error OnlyPlayersWithStoredNumbersCanCallThisFunction();
 
-    function getRandomNumber(euint32 loopCounter, euint32 _lowerBound, euint64 seed) internal returns euint32 {
+    function getRandomNumber(euint8 _lowerBound) internal returns (euint8) {
+        euint8 randomNumber = FHE.randEuint8(10);
 
-        euint256 rand = euint256(
-            keccak256(
-                abi.encodePacked(
-                    block.timestamp,
-                    block.prevrandao,
-                    msg.sender,
-                    seed,
-                    loopCounter
-                )
-            )
-        );
-
-        // Range 0–9, 10–19, 20–29, etc
-        euint32 randomNumber = (rand % 10) + _lowerBound;
-        return randomNumber;
+        return FHE.add(randomNumber, _lowerBound);
     }
 
-    function addPlayersNumbers(externalEuint32 player1Number, externalEuint32 player2Number, bytes calldata inputProof, string memory roomId, string memory player1Name, string memory player2Name) external {
-        euint32 encryptedPlayer1Number = FHE.fromExternal(player1Number, inputProof);
-        euint32 encryptedPlayer2Number = FHE.fromExternal(player2Number, inputProof);
+    // function addPlayersNumbers(
+    //     externalEuint8 player1Number,
+    //     externalEuint8 player2Number,
+    //     bytes calldata inputProof,
+    //     string memory roomId,
+    //     string memory player1Name,
+    //     string memory player2Name
+    // ) external {
+    //     euint8 encryptedPlayer1Number = FHE.fromExternal(player1Number, inputProof);
+    //     euint8 encryptedPlayer2Number = FHE.fromExternal(player2Number, inputProof);
 
-        // Store in roomDetails mapping
-        roomDetails[roomId] = RoomInfo({
-            player1: player1Name,
-            player2: player2Name,
-            player1Number: encryptedPlayer1Number,
-            player2Number: encryptedPlayer2Number
-        });
+    //     // Store in roomDetails mapping
+    //     roomDetails[roomId] = RoomInfo({
+    //         player1: player1Name,
+    //         player2: player2Name,
+    //         player1Number: encryptedPlayer1Number,
+    //         player2Number: encryptedPlayer2Number
+    //     });
 
-        // Set access control permissions
-        FHE.allowThis(roomDetails[roomId]);
-        FHE.allow(roomDetails[roomId], msg.sender);
+    //     // Set access control permissions
+    //     FHE.allowThis(roomDetails[roomId]);
+    //     FHE.allow(roomDetails[roomId], msg.sender);
 
-        emit GottenPlayersNumbers("Player 1 and 2 numbers saved!");
-    }
+    //     emit NumberSaved("Player 1 and 2 numbers saved!");
+    // }
 
-    function AddNumber(externalEuint32 userNumber, bytes calldata inputProof) external {
-        euint32 encryptedUserNumber = FHE.fromExternal(userNumber, inputProof);
+    function AddNumber(externalEuint8 userNumber, bytes calldata inputProof) external {
+        euint8 encryptedUserNumber = FHE.fromExternal(userNumber, inputProof);
 
-        if (userNumbers[msg.sender].length == 5) revert OnlyFiveQuestionsCanBeAnswered();
+        uint256 userNumbersLength = userNumbers[msg.sender].length;
 
-        userNumbers[msg.sender].push(encryptedUserNumber);
+        if (userNumbersLength == 5) revert OnlyFiveQuestionsCanBeAnswered();
 
-        FHE.allowThis(userNumbers[msg.sender]);
-        FHE.allow(userNumbers[msg.sender], msg.sender);
+        userNumbers[msg.sender][userNumbersLength] = encryptedUserNumber;
 
-        emit NumberSaved("Player number saved!");
+        FHE.allowThis(userNumbers[msg.sender][userNumbersLength]);
+        FHE.allow(userNumbers[msg.sender][userNumbersLength], msg.sender);
+
+        emit NumberSaved("single player number saved!");
     }
 
     /// @notice This returns the last result from the desired user
+    // change this to use gameId
     /// @param _user The address whose result is to be fetched
-    function getAnotherPlayerResult(address _user) public view returns (euint32[] player, euint32[] system) {
+    function getAnotherPlayerResult(address _user) public view returns (euint8[] memory player, euint8[] memory system) {
         player = userNumbers[_user];
         system = userResults[_user];
     }
 
-    function getResult(string memory username) public view returns (euint32[] playerNumbers, euint32[] systemNumbers, euint256 points, euint256 totalPoints) {
-        euint64 seed = gamesPlayed[msg.sender];
+    function getResult(string memory username) public returns (euint8[] memory playerNumbers, euint8[] memory systemNumbers, euint128 points, euint128 totalPoints) {
+        uint256 userResultLength = userResults[msg.sender].length;
+
         playerNumbers = userNumbers[msg.sender];
-        points = 0;
+        points = FHE.asEuint128(0);
 
-        euint32 number1 = getRandomNumber(i, 0 * 10, seed);
-        userResults[msg.sender].push(number1);
+        euint8 number1 = getRandomNumber(FHE.asEuint8(0 * 10));
+        userResults[msg.sender][userResultLength] = number1;
 
-        if (number1 == playerNumbers[0]) {
-            points = points + 10;
-        }
+        points = FHE.select(FHE.eq(number1, playerNumbers[0]), FHE.add(points, FHE.asEuint128(10)), points);
 
-        euint32 number2 = getRandomNumber(i, 1 * 10, seed + 4);
-        userResults[msg.sender].push(number2);
+        euint8 number2 = getRandomNumber(FHE.asEuint8(1 * 10));
+        userResults[msg.sender][userResultLength + 1] = number2;
 
-        if (number2 == playerNumbers[1]) {
-            points = points + 10;
-        }
+        points = FHE.select(FHE.eq(number2, playerNumbers[1]), FHE.add(points, FHE.asEuint128(10)), points);
 
-        euint32 number3 = getRandomNumber(i, 2 * 10, seed + 8);
-        userResults[msg.sender].push(number3);
+        euint8 number3 = getRandomNumber(FHE.asEuint8(2 * 10));
+        userResults[msg.sender][userResultLength + 2] = number3;
 
-        if (number3 == playerNumbers[2]) {
-            points = points + 10;
-        }
+        points = FHE.select(FHE.eq(number3, playerNumbers[2]), FHE.add(points, FHE.asEuint128(10)), points);
 
-        euint32 number4 = getRandomNumber(i, 3 * 10, seed + 12);
-        userResults[msg.sender].push(number4);
+        euint8 number4 = getRandomNumber(FHE.asEuint8(3 * 10));
+        userResults[msg.sender][userResultLength + 3] = number4;
 
-        if (number4 == playerNumbers[3]) {
-            points = points + 10;
-        }
+        points = FHE.select(FHE.eq(number4, playerNumbers[3]), FHE.add(points, FHE.asEuint128(10)), points);
 
-        euint32 number5 = getRandomNumber(i, 4 * 10, seed + 16);
-        userResults[msg.sender].push(number5);
+        euint8 number5 = getRandomNumber(FHE.asEuint8(4 * 10));
+        userResults[msg.sender][userResultLength + 4] = number5;
 
-        if (number5 == playerNumbers[4]) {
-            points = points + 10;
-        }
+        points = FHE.select(FHE.eq(number5, playerNumbers[4]), FHE.add(points, FHE.asEuint128(10)), points);
 
-        totalPoints = totalPointsGottenFromGames[msg.sender] + points;
+        totalPoints = FHE.add(totalPointsGottenFromGames[msg.sender], points);
 
-        if (totalPoints > _topWinner.points) {
-            _topWinner = TopWinner({
-                name: username,
-                user: msg.sender,
-                points: totalPoints
-            });
-        }
+        euint128 topWinnerPoints = FHE.select(FHE.gt(totalPoints, _topWinner.points), totalPoints, _topWinner.points);
+        // string memory topWinnerUsername = FHE.select(FHE.gt(totalPoints, _topWinner.points), username, _topWinner.name);
+        eaddress encTopWinnerAddress = FHE.select(FHE.gt(totalPoints, _topWinner.points), FHE.asEaddress(msg.sender), FHE.asEaddress(_topWinner.user));
 
-        systemNumbers = userResults[msg.sender];
+        gamesPlayed[msg.sender] = FHE.add(gamesPlayed[msg.sender], 1);
+        userResults[msg.sender] = systemNumbers;
         totalPointsGottenFromGames[msg.sender] = totalPoints;
-        gamesPlayed[msg.sender]++;
+    }
+
+    function clearNumbersAndResult() onlyPlayer external {
+
+    }
+
+    modifier onlyPlayer {
+        if (userNumbers[msg.sender].length == 0) revert OnlyPlayersWithStoredNumbersCanCallThisFunction();
+        _;
     }
 
     // /// @notice A restricted function that only a user who has added a record can call
